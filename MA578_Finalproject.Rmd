@@ -7,7 +7,7 @@ output: pdata_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load("bayesplot","knitr","ggplot2","rstanarm","brms","ggpubr","dplyr")
+pacman::p_load("bayesplot","knitr","ggplot2","rstanarm","brms","ggpubr","dplyr","gridExtra","corrplot")
 ```
 
 ```{r}
@@ -52,11 +52,9 @@ p6 <- ggplot(data, aes(x = FinalExam)) +
   labs(title = "FinalExam", x = "Score", y = "Density") +
    theme_classic()
 
-library(gridExtra)
 grid.arrange(p1, p2, p3, p4, p5, p6, ncol=2)
 
 #Both the predictor and predicted variables are approximately normally distributed, which means that the normal distribution can be used as the conjugate prior distribution, and the model can use a Bayesian linear regression model. Next, we will further explore the selection of variables.
-library(corrplot)
 cor_matrix <- cor(data[, c("Exam.1", "Exam.2", "Exam.3", "Homework", "Attendance", "FinalExam")])
 
 corrplot(cor_matrix, method = "color", col = colorRampPalette(c("#6BAED6", "#FFFFFF", "#FD8D3C"))(200), 
@@ -135,7 +133,7 @@ prior <- c(
   prior(normal(0, 10), class = "b", coef = "Exam.1:Exam.2:Exam.3"),
   prior(normal(0, 10), class = "b", coef = "Homework:Attendance")
 )
-model2 <- brm(
+model1_interaction <- brm(
   FinalExam ~ Exam.1 * Exam.2 * Exam.3 + Homework * Attendance,
   data = data[data$Year == 2022 & data$Semester == "Fall", ],
   prior = prior,
@@ -144,17 +142,141 @@ model2 <- brm(
   iter = 10000,
   warmup = 5000
 )
-summary(model2)
-yrep <- posterior_predict(model1)
+summary(model1_interaction)
+yrep <- posterior_predict(model1_interaction)
 mp1 <- ppc_dens_overlay(data[data$Year == 2022 & data$Semester == "Fall","FinalExam"], yrep[1:100,])
 mp2 <- ppc_stat(data[data$Year == 2022 & data$Semester == "Fall","FinalExam"], yrep, stat="max")
 grid.arrange(mp1, mp2, ncol=2)
 ```
 ```{r}
-library("bridgesampling")
-bridge1 <- bridge_sampler(model1)
-bridge2 <- bridge_sampler(model2)
-bf <- bayes_factor(bridge1, bridge2)
+loo1 <- loo(model1)
+loo2 <- loo(model2)
+loo_compare(loo1, loo2)
+```
+```{r}
+alpha <- 0.5
+beta <- 0.1
+
+result <- as.data.frame(matrix(0, nrow=2, ncol=6))
+colnames(result) <- c("Exam1", "Exam2", "Exam3", "Homework", "Attendance", "FinalExam")
+rownames(result) <- c("Mean", "Variance")
+
+pivot_data <- pivot_data %>%
+  filter(!(Year == 2022 & Semester == "Fall"))
+
+rho <- numeric(length=nrow(pivot_data))
+sample_size <- sum(pivot_data$N)
+
+for (i in 1:nrow(pivot_data)) {
+  if (pivot_data[i, "Semester"] == "Fall") {
+    t <- (2022 - pivot_data[i, "Year"]) * 2
+  } else {
+    t <- (2022 - pivot_data[i, "Year"]) * 2 + 1
+  }
+  rho[i] <- (alpha + beta * pivot_data[i, "N"] / sample_size)^t
+}
+
+# Normalize rho
+rho <- unlist(rho)
+rho <- rho/sum(rho)
+
+for(i in 1:nrow(pivot_data)){
+  for(j in 1:ncol(result)){
+    result[1,j] <- result[1,j]+rho[i]*pivot_data[i,1+j*2]
+    result[2,j] <- result[2,j]+rho[i]*pivot_data[i,2+j*2]
+}
+}
+
+
+prior <- c(
+  prior(normal(77.44475, sqrt(288.31239)), class = "Intercept"),
+  prior(normal(74.37197, sqrt(277.79961)), class = "b", coef = "Exam.1"),
+  prior(normal(72.53064, sqrt(481.67629)), class = "b", coef = "Exam.2"),
+  prior(normal(70.11672, sqrt(444.32621)), class = "b", coef = "Exam.3"),
+  prior(normal(81.11339, sqrt(314.32110)), class = "b", coef = "Homework"),
+  prior(normal(76.82949, sqrt(444.35714)), class = "b", coef = "Attendance")
+)
+model2 <- brm(
+  FinalExam ~ Exam.1 + Exam.2 + Exam.3 + Homework + Attendance,
+  data = data[data$Year == 2022 & data$Semester == "Fall", ],
+  prior = prior,
+  family = gaussian(),
+  chains = 4,
+  iter = 2000,
+  warmup = 1000
+)
+summary(model2)
+yrep <- posterior_predict(model2)
+mp1 <- ppc_dens_overlay(data[data$Year == 2022 & data$Semester == "Fall","FinalExam"], yrep[1:100,])
+mp2 <- ppc_stat(data[data$Year == 2022 & data$Semester == "Fall","FinalExam"], yrep, stat="max")
+grid.arrange(mp1, mp2, ncol=2)
+```
+###model3
+```{r}
+alpha <- 0.5
+beta <- 0.1
+
+result <- as.data.frame(matrix(0, nrow=2, ncol=6))
+colnames(result) <- c("Exam1", "Exam2", "Exam3", "Homework", "Attendance", "FinalExam")
+rownames(result) <- c("Mean", "Variance")
+
+pivot_data <- pivot_data %>%
+  filter(Semester == "Fall")
+
+rho <- numeric(length=nrow(pivot_data))
+sample_size <- sum(pivot_data$N)
+
+for (i in 1:nrow(pivot_data)) {
+  if (pivot_data[i, "Semester"] == "Fall") {
+    t <- (2022 - pivot_data[i, "Year"]) * 2
+  } else {
+    t <- (2022 - pivot_data[i, "Year"]) * 2 + 1
+  }
+  rho[i] <- (alpha + beta * pivot_data[i, "N"] / sample_size)^t
+}
+
+# Normalize rho
+rho <- unlist(rho)
+rho <- rho/sum(rho)
+
+for(i in 1:nrow(pivot_data)){
+  for(j in 1:ncol(result)){
+    result[1,j] <- result[1,j]+rho[i]*pivot_data[i,1+j*2]
+    result[2,j] <- result[2,j]+rho[i]*pivot_data[i,2+j*2]
+}
+}
+
+prior <- c(
+  prior(normal(85.49931, sqrt(128.26594)), class = "Intercept"),
+  prior(normal(74.05451, sqrt(389.95713)), class = "b", coef = "Exam.1"),
+  prior(normal(80.39822, sqrt(301.57012)), class = "b", coef = "Exam.2"),
+  prior(normal(79.85711, sqrt(275.13609)), class = "b", coef = "Exam.3"),
+  prior(normal(84.27528, sqrt(172.23756)), class = "b", coef = "Homework"),
+  prior(normal(84.43438, sqrt(303.45432)), class = "b", coef = "Attendance")
+)
+model3 <- brm(
+  FinalExam ~ Exam.1 + Exam.2 + Exam.3 + Homework + Attendance,
+  data = data[data$Year == 2022 & data$Semester == "Fall", ],
+  prior = prior,
+  family = gaussian(),
+  chains = 4,
+  iter = 2000,
+  warmup = 1000
+)
+summary(model3)
+yrep <- posterior_predict(model3)
+mp1 <- ppc_dens_overlay(data[data$Year == 2022 & data$Semester == "Fall","FinalExam"], yrep[1:100,])
+mp2 <- ppc_stat(data[data$Year == 2022 & data$Semester == "Fall","FinalExam"], yrep, stat="max")
+grid.arrange(mp1, mp2, ncol=2)
+```
+
+```{r, warning=FALSE}
+
+loo1 <- loo(model1)
+loo2 <- loo(model1_interaction)
+loo3 <- loo(model2)
+loo4 <- loo(model3)
+loo_compare(loo1, loo2, loo3, loo4)
 ```
 
 
