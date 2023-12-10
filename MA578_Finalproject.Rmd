@@ -1,0 +1,160 @@
+---
+title: "MA578 Finalproject"
+author: "Bingtian Ye"
+date: "2023-12-9"
+output: pdata_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load("bayesplot","knitr","ggplot2","rstanarm","brms","ggpubr","dplyr")
+```
+
+```{r}
+data <- read.csv("ProbStat.csv")
+```
+## EDA
+```{r}
+#distribution of variable
+p1 <- ggplot(data, aes(x = Exam.1)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 5, fill = "#69e5a2", color = "grey") + 
+  geom_density(alpha = .2, color = "#69b3a2") + 
+  labs(title = "Exam 1", x = "Score", y = "Density") +
+   theme_classic()
+
+p2 <- ggplot(data, aes(x = Exam.2)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 5, fill = "#69e5a2", color = "grey") + 
+  geom_density(alpha = .2, color = "#69b3a2") + 
+  labs(title = "Exam 2", x = "Score", y = "Density") +
+   theme_classic()
+
+p3 <- ggplot(data, aes(x = Exam.3)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 5, fill = "#69e5a2", color = "grey") + 
+  geom_density(alpha = .2, color = "#69b3a2") + 
+  labs(title = "Exam 3", x = "Score", y = "Density") +
+   theme_classic()
+
+p4 <- ggplot(data, aes(x = Homework)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 5, fill = "#69e5a2", color = "grey") + 
+  geom_density(alpha = .2, color = "#69b3a2") + 
+  labs(title = "Homework", x = "Score", y = "Density") +
+   theme_classic()
+
+p5 <- ggplot(data, aes(x = Attendance)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 5, fill = "#69e5a2", color = "grey") + 
+  geom_density(alpha = .2, color = "#69b3a2") + 
+  labs(title = "Attendance", x = "Score", y = "Density") +
+   theme_classic()
+
+p6 <- ggplot(data, aes(x = FinalExam)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 5, fill = "#69e5a2", color = "grey") + 
+  geom_density(alpha = .2, color = "#69b3a2") + 
+  labs(title = "FinalExam", x = "Score", y = "Density") +
+   theme_classic()
+
+library(gridExtra)
+grid.arrange(p1, p2, p3, p4, p5, p6, ncol=2)
+
+#Both the predictor and predicted variables are approximately normally distributed, which means that the normal distribution can be used as the conjugate prior distribution, and the model can use a Bayesian linear regression model. Next, we will further explore the selection of variables.
+library(corrplot)
+cor_matrix <- cor(data[, c("Exam.1", "Exam.2", "Exam.3", "Homework", "Attendance", "FinalExam")])
+
+corrplot(cor_matrix, method = "color", col = colorRampPalette(c("#6BAED6", "#FFFFFF", "#FD8D3C"))(200), 
+         type = "upper", addCoef.col = "black", tl.col = "black", tl.srt = 45, 
+         diag = TRUE)
+
+#It looks like all predictors have some degree of correlation with the predicted variable, which means I can select all predictors. At the same time, you can see that the correlation coefficient of Exam.3 is greater than that of Exam.1 and Exam.2. This is also more in line with our common sense, because Exam.3 is closest to FinalExam.
+ggplot(data, aes(x = Year, fill = Semester)) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = c("Fall" = "#0F8B0F", "Spring" = "#69e5a2")) +
+  labs(title = "Distribution of Data Across Different Semesters and Years",
+       x = "Year", y = "Number of Records") +
+  theme_minimal()
+#The distribution of the data shows the amount of data across different academic years and semesters. We can see that the number of records varies for each semester, but there is a certain amount of data for each semester. This means that we can use data from the previous semester or semesters as prior information.
+#Select weight data, which depends on the sample size K_0 of the prior distribution and the time interval t
+```
+#tidy data
+```{r}
+pivot_data <- data %>%
+  group_by(Year, Semester) %>%
+  summarise(
+    Exam1_Mean = mean(Exam.1, na.rm = TRUE),
+    Exam1_Var = var(Exam.1, na.rm = TRUE),
+    Exam2_Mean = mean(Exam.2, na.rm = TRUE),
+    Exam2_Var = var(Exam.2, na.rm = TRUE),
+    Exam3_Mean = mean(Exam.3, na.rm = TRUE),
+    Exam3_Var = var(Exam.3, na.rm = TRUE),
+    Homework_Mean = mean(Homework, na.rm = TRUE),
+    Homework_Var = var(Homework, na.rm = TRUE),
+    Attendance_Mean = mean(Attendance, na.rm = TRUE),
+    Attendance_Var = var(Attendance, na.rm = TRUE),
+    FinalExam_Mean = mean(FinalExam, na.rm = TRUE),
+    FinalExam_Var = var(FinalExam, na.rm = TRUE),
+    N = n()
+  ) %>%
+  ungroup()
+```
+##modeling
+###model1
+```{r}
+prior <- c(
+  prior(normal(72.9,sqrt(407.8)), class = "Intercept"),
+  prior(normal(74.5,sqrt(227.5)), class = "b", coef = "Exam.1"),
+  prior(normal(70.0,sqrt(537.0)), class = "b", coef = "Exam.2"),
+  prior(normal(61.7, sqrt(629.5)), class = "b", coef = "Exam.3"),
+  prior(normal(82.0, sqrt(300.5)), class = "b", coef = "Homework"),
+  prior(normal(73.5, sqrt(496.0)), class = "b", coef = "Attendance")
+)
+model1 <- brm(
+  FinalExam ~ Exam.1 + Exam.2 + Exam.3 + Homework + Attendance,
+  data = data[data$Year == 2022 & data$Semester == "Fall", ],
+  prior = prior,
+  family = gaussian(),
+  chains = 4,
+  iter = 2000,
+  warmup = 1000
+)
+summary(model1)
+yrep <- posterior_predict(model1)
+mp1 <- ppc_dens_overlay(data[data$Year == 2022 & data$Semester == "Fall","FinalExam"], yrep[1:100,])
+mp2 <- ppc_stat(data[data$Year == 2022 & data$Semester == "Fall","FinalExam"], yrep, stat="max")
+grid.arrange(mp1, mp2, ncol=2)
+```
+###model1 interaction
+```{r}
+prior <- c(
+  prior(normal(72.9, sqrt(407.8)), class = "Intercept"),
+  prior(normal(74.5, sqrt(227.5)), class = "b", coef = "Exam.1"),
+  prior(normal(70.0, sqrt(537.0)), class = "b", coef = "Exam.2"),
+  prior(normal(61.7, sqrt(629.5)), class = "b", coef = "Exam.3"),
+  prior(normal(82.0, sqrt(300.5)), class = "b", coef = "Homework"),
+  prior(normal(73.5, sqrt(496.0)), class = "b", coef = "Attendance"),
+  prior(normal(0, 10), class = "b", coef = "Exam.1:Exam.2"),
+  prior(normal(0, 10), class = "b", coef = "Exam.1:Exam.3"),
+  prior(normal(0, 10), class = "b", coef = "Exam.2:Exam.3"),
+  prior(normal(0, 10), class = "b", coef = "Exam.1:Exam.2:Exam.3"),
+  prior(normal(0, 10), class = "b", coef = "Homework:Attendance")
+)
+model2 <- brm(
+  FinalExam ~ Exam.1 * Exam.2 * Exam.3 + Homework * Attendance,
+  data = data[data$Year == 2022 & data$Semester == "Fall", ],
+  prior = prior,
+  family = gaussian(),
+  chains = 4,
+  iter = 10000,
+  warmup = 5000
+)
+summary(model2)
+yrep <- posterior_predict(model1)
+mp1 <- ppc_dens_overlay(data[data$Year == 2022 & data$Semester == "Fall","FinalExam"], yrep[1:100,])
+mp2 <- ppc_stat(data[data$Year == 2022 & data$Semester == "Fall","FinalExam"], yrep, stat="max")
+grid.arrange(mp1, mp2, ncol=2)
+```
+```{r}
+library("bridgesampling")
+bridge1 <- bridge_sampler(model1)
+bridge2 <- bridge_sampler(model2)
+bf <- bayes_factor(bridge1, bridge2)
+```
+
+
